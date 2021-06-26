@@ -47,6 +47,8 @@ namespace
 	{
 		int ret = reinterpret_cast<decltype(LZ4_decompress_safe_ext_hook)*>(LZ4_decompress_safe_ext_orig)(
 			src, dst, compressedSize, dstCapacity);
+
+		std::string data(dst, ret);
 		responses::print_response_additional_info(std::string(dst, ret));
 
 		return ret;
@@ -112,7 +114,6 @@ void attach()
 	MH_CreateHook(LoadLibraryW, load_library_w_hook, &load_library_w_orig);
 	MH_EnableHook(LoadLibraryW);
 
-	std::thread(mdb::init).detach();
 	std::thread(edb::init).detach();
 }
 
