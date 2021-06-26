@@ -37,18 +37,6 @@ namespace
 		return std::to_string(ms.count());
 	}
 
-	void write_file(std::string file_name, char* buffer, int len)
-	{
-		FILE* fp;
-		fopen_s(&fp, file_name.c_str(), "wb");
-		if (fp != nullptr)
-		{
-			fwrite(buffer, 1, len, fp);
-			fclose(fp);
-		}
-	}
-
-
 	void* LZ4_decompress_safe_ext_orig = nullptr;
 
 	int LZ4_decompress_safe_ext_hook(
@@ -59,33 +47,12 @@ namespace
 	{
 		int ret = reinterpret_cast<decltype(LZ4_decompress_safe_ext_hook)*>(LZ4_decompress_safe_ext_orig)(
 			src, dst, compressedSize, dstCapacity);
-
-		auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("R.msgpack");
-		write_file(out_path, dst, ret);
-		printf("wrote response to %s\n", out_path.c_str());
-
 		responses::print_response_additional_info(std::string(dst, ret));
 
 		return ret;
 	}
 
-	void* LZ4_compress_default_ext_orig = nullptr;
-
-	int LZ4_compress_default_ext_hook(
-		char* src,
-		char* dst,
-		int srcSize,
-		int dstCapacity)
-	{
-		int ret = reinterpret_cast<decltype(LZ4_compress_default_ext_hook)*>(LZ4_compress_default_ext_orig)(
-			src, dst, srcSize, dstCapacity);
-
-		auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("Q.msgpack");
-		write_file(out_path, src, srcSize);
-		printf("wrote request to %s\n", out_path.c_str());
-
-		return ret;
-	}
+	
 
 	void bootstrap_carrot_juicer()
 	{
@@ -107,14 +74,7 @@ namespace
 		MH_CreateHook(LZ4_decompress_safe_ext_ptr, LZ4_decompress_safe_ext_hook, &LZ4_decompress_safe_ext_orig);
 		MH_EnableHook(LZ4_decompress_safe_ext_ptr);
 
-		auto LZ4_compress_default_ext_ptr = GetProcAddress(libnative_module, "LZ4_compress_default_ext");
-		printf("LZ4_compress_default_ext at %p\n", LZ4_compress_default_ext_ptr);
-		if (LZ4_compress_default_ext_ptr == nullptr)
-		{
-			return;
-		}
-		MH_CreateHook(LZ4_compress_default_ext_ptr, LZ4_compress_default_ext_hook, &LZ4_compress_default_ext_orig);
-		MH_EnableHook(LZ4_compress_default_ext_ptr);
+
 	}
 
 	void* load_library_w_orig = nullptr;
