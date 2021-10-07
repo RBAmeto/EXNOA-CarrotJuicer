@@ -6,7 +6,7 @@ For Android, refer to [Riru-CarrotJuicer](https://github.com/CNA-Bld/Riru-Carrot
 
 ## Usage
 
-Theoretically this should support "modern" versions of Windows, as long as it is x64. But this is only tested with Windows 10 v2004.
+Theoretically this should support "modern" versions of Windows, as long as it is x64. But this is only tested with Windows 10 v21H1.
 
 Please make sure that you have installed the latest Visual C++ 2019 Redistributable, otherwise the game would crash at start up time with no message at all.
 
@@ -25,6 +25,38 @@ Starting from v1.2, EXNOA-CarrotJuicer would print extra info that may help user
 The Releases in this repo would bundle the latest file as of that time, but you may wish to check for updates [here](https://github.com/CNA-Bld/cjedb) from time to time, especially after a new charactor or support card is added.
 
 In addition, EXNOA-CarrotJuicer will attempt to read `master.mdb` directly from the game's data directory (in `%USERPROFILE%\AppData\LocalLow\Cygames\umamusume\master`) with a bundled SQLite engine. (Sorry for the bloating file size, but the game itself takes 4GB anyway, so we are as trivial as some rounding error.) If you somehow moved it, please at least make sure a link is available.
+
+### `cjconfig.json`
+
+To tweak EXNOA-CarrotJuicer's features, create a file named `cjconfig.json` in the same directory. If a config item is missing (or we fail to parse this file), the default value will be used.
+
+Supported options and their default values:
+
+```js
+{
+	"save_request": true,
+	"save_response": true,
+
+	"enable_ansi_colors": true, // Enable features that depend on ANSI colors. Works only on Windows 10 v1511+.
+
+	"enable_notifier": false,
+	"notifier_host": "",
+	"notifier_connection_timeout_msec": 100,
+	"notifier_print_error": true,
+
+	"aoharu_team_sort_with_speed": true, // If false, sort with rank score.
+}
+```
+
+### Notifier
+
+If `cjconfig.json` sets `enable_notifier` to `true`, we will attempt to notify a listener whenever a response is received.
+
+`notifier_host` is required, and it should include scheme, host and optionally, port. For instance, it can be set to `http://127.0.0.1:4693`. In this case, we will send a `POST` request to `http://127.0.0.1:4693/notify/response`, with the raw response msgpack data as body.
+
+This does not support multiple listeners, and if you indeed would like to do this, you will have to write a demultiplexing server yourself.
+
+Note that this HTTP request blocks the game, to avoid potential races with the listener. There is an option `notifier_connection_timeout_msec` which defaults to 100 ms. If the listener is not running, we will at most wait for 100 ms during connection setup so we don't slow down the game too much. If `notifier_print_error` is true, an error message will be printed when we fail to notify the listener. Note that non-200 responses from the listener are always printed regardless the value of `notifier_print_error`.
 
 ### `race_scenario`
 

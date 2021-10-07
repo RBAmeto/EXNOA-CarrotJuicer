@@ -1,7 +1,8 @@
-﻿#include <cstdio>
-#include <iomanip>
+﻿#include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
+
+#include "config.hpp"
 #include "mdb.hpp"
 #include "edb.hpp"
 
@@ -55,18 +56,18 @@ namespace responses
 		}
 	}
 
-	void print_event_data(nlohmann::basic_json<>& e)
+	bool print_event_data(const json& e) // Returns true if there are more than 1 choice.
 	{
-		int story_id = e.at("story_id").get<int>();
+		const int story_id = e.at("story_id").get<int>();
 
-		std::cout << "event_id = " << e.at("event_id") << "; story_id = " << story_id << std::endl;
+		std::cout << "event_id = " << e.at("event_id") << "; story_id = " << story_id << "\n";
 
-		if (auto story_name = mdb::find_text(181, e.at("story_id")); !story_name.empty())
+		if (const auto story_name = mdb::find_text(181, e.at("story_id")); !story_name.empty())
 		{
-			std::cout << story_name << std::endl;
+			std::cout << story_name << "\n";
 		}
 
-		if (auto& choice_array = e.at("event_contents_info").at("choice_array"); !choice_array.empty())
+		if (const auto& choice_array = e.at("event_contents_info").at("choice_array"); !choice_array.empty())
 		{
 			edb::print_choices(story_id);
 
@@ -76,8 +77,11 @@ namespace responses
 				std::cout << choice.value().at("select_index")
 					<< (choice + 1 == choice_array.end() ? "" : ", ");
 			}
-			std::cout << std::endl;
+			std::cout << "\n";
+
+			return choice_array.size() > 1;
 		}
+		return false;
 	}
 
 	const std::map<int, std::string> distance_type_labels = {
@@ -92,7 +96,7 @@ namespace responses
 	};
 
 	const std::map<int, std::string> running_style_labels = {
-		{0, u8"　"}, {1, u8"逃"}, {2, u8"先"}, {3, u8"差"}, {4, u8"追"}
+		{0, u8"  "}, {1, u8"逃"}, {2, u8"先"}, {3, u8"差"}, {4, u8"追"}
 	};
 	const std::map<int, std::string> running_style_proper_fields = {
 		{1, "proper_running_style_nige"},
@@ -105,14 +109,14 @@ namespace responses
 		{1, "G"}, {2, "F"}, {3, "E"}, {4, "D"}, {5, "C"}, {6, "B"}, {7, "A"}, {8, "S"},
 	};
 
-	const std::vector<std::pair<std::string, std::string>> status_data_fields = {
+	const std::vector<std::pair<std::string, std::string>> team_stadium_chara_status_data_fields = {
 		{u8"スピ", "speed"}, {u8"スタ", "stamina"}, {u8"パワ", "power"}, {u8"根性", "guts"}, {u8"賢さ", "wiz"},
 		{u8"評価", "rank_score"},
 	};
 
-	void print_team_stadium_opponent_info(nlohmann::basic_json<>& o)
+	void print_team_stadium_opponent_info(const json& o)
 	{
-		const auto endl = "|\n";
+		constexpr auto endl = "|\n";
 
 		std::cout << "evaluation_point = " << o.at("evaluation_point") << '\n';
 
@@ -145,11 +149,11 @@ namespace responses
 
 			if (const int trained_chara_id = team_data.at("trained_chara_id"); trained_chara_id != 0)
 			{
-				trained_chara_array.push_back(trained_chara_map.at(team_data.at("trained_chara_id")));
+				trained_chara_array.emplace_back(trained_chara_map.at(team_data.at("trained_chara_id")));
 			}
 			else
 			{
-				trained_chara_array.push_back(nullptr);
+				trained_chara_array.emplace_back(nullptr);
 			}
 		}
 		std::cout << endl;
@@ -175,7 +179,7 @@ namespace responses
 		}
 		std::cout << endl;
 
-		for (const auto& [label, field] : status_data_fields)
+		for (const auto& [label, field] : team_stadium_chara_status_data_fields)
 		{
 			std::cout << label;
 			for (int i = 0; i < team_data_array.size(); ++i)
@@ -195,6 +199,80 @@ namespace responses
 		std::cout << '\n';
 	}
 
+	void print_aoharu_team_info(const json& d)
+	{
+		const auto& tds = d.at("team_data_set");
+		const auto& ti = tds.at("team_info");
+
+		std::map<int, int> chara_id_map;
+		for (const auto& ei : tds.at("evaluation_info_array"))
+		{
+			chara_id_map[ei.at("target_id")] = ei.at("chara_id");
+		}
+
+		std::map<int, nlohmann::basic_json<>> current_team_map; // from chara_id
+		for (const auto& td : ti.at("team_data_array"))
+		{
+			current_team_map[td.at("chara_id")] = td;
+		}
+
+		std::cout << u8"   ID | スピ | スタ | パワ | 根性 | 賢さ |  評価 | 芝ダ | 短マ中長 |        |                    |\n";
+
+		auto chara_info_array = ti.at("team_chara_info_array").get<std::vector<json>>();
+		std::sort(chara_info_array.begin(), chara_info_array.end(), [](const auto& lhs, const auto& rhs)
+		{
+			if (config::get().aoharu_team_sort_with_speed)
+			{
+				return lhs.at("speed") > rhs.at("speed");
+			}
+			return lhs.at("rank_score") > rhs.at("rank_score");
+		});
+
+		for (const auto& member : chara_info_array)
+		{
+			const int chara_id = chara_id_map[member.at("training_partner_id")];
+			std::cout << " " << std::setw(4) << chara_id << " | ";
+
+			for (auto& status_field : {"speed", "stamina", "power", "guts", "wiz"})
+			{
+				std::cout << std::setw(4) << static_cast<int>(member.at(status_field)) << " | ";
+			}
+
+			std::cout << std::setw(5) << static_cast<int>(member.at("rank_score")) << " | "
+				<< mdb::get_formatted_chara_proper_labels(chara_id) << " | ";
+
+			if (const auto distance_type = current_team_map.find(chara_id); distance_type != current_team_map.end())
+			{
+				const auto& team_data = distance_type->second;
+				std::cout << distance_type_labels.at(team_data.at("distance_type")) << " " << team_data.at("member_id");
+			}
+			else
+			{
+				std::cout << "      ";
+			}
+			std::cout << " | ";
+
+			const auto& chara_name = mdb::get_chara_names(chara_id);
+			std::cout << chara_name.first;
+			for (int i = chara_name.first.length() / 3; i < 9; i++) // Assume all names follow JRA standard (<= 9 カタカナ)
+			{
+				std::cout << "  ";
+			}
+			std::cout << " | " << chara_name.second << "\n";
+		}
+	}
+
+	void print_single_mode_chara_info(const json& chara_info)
+	{
+		std::cout << u8"\n スピ | スタ | パワ | 根性 | 賢さ | 体力\n ";
+
+		for (auto& status_field : {"speed", "stamina", "power", "guts", "wiz"})
+		{
+			std::cout << std::setw(4) << static_cast<int>(chara_info.at(status_field)) << " | ";
+		}
+		std::cout << chara_info.at("vital") << " / " << chara_info.at("max_vital") << "\n";
+	}
+
 	void print_response_additional_info(const std::string& data)
 	{
 		try
@@ -206,7 +284,7 @@ namespace responses
 			}
 			catch (const json::parse_error& e)
 			{
-				printf("json: parse_error: %s\n", e.what());
+				std::cout << "json: parse_error: " << e.what() << "\n";
 				return;
 			}
 
@@ -216,27 +294,31 @@ namespace responses
 				{
 					return;
 				}
-				auto& data = j.at("data");
+				const auto& data = j.at("data");
 				if (data.contains("attest") && data.contains("nonce") && data.contains("terms_updated") &&
 					data.contains("is_tutorial") && data.contains("resource_version"))
 				{
 					// tool/start_session, close master.mdb in case the game wants to update it
-					std::cout << "Received tool/start_session, unloading master.mdb." << std::endl;
+					std::cout << "Received tool/start_session, unloading master.mdb.\n";
 					mdb::unload();
 				}
 				else if (data.contains("common_define") && data.contains("res_version"))
 				{
 					// load/index, open master.mdb
-					std::cout << "Received load/index, loading master.mdb." << std::endl;
+					std::cout << "Received load/index, loading master.mdb.\n";
 					mdb::init();
 				}
 				else if (data.contains("unchecked_event_array"))
 				{
 					// In single mode.
-					auto& unchecked_event_array = data.at("unchecked_event_array");
-					for (auto& e : unchecked_event_array)
+					bool should_print_chara_info = false;
+					for (const auto& e : data.at("unchecked_event_array"))
 					{
-						print_event_data(e);
+						should_print_chara_info = print_event_data(e) || should_print_chara_info;
+					}
+					if (should_print_chara_info)
+					{
+						print_single_mode_chara_info(data.at("chara_info"));
 					}
 				}
 				else if (data.contains("event_contents_info"))
@@ -247,25 +329,29 @@ namespace responses
 				else if (data.contains("opponent_info_array"))
 				{
 					// team_stadium/opponent_list
-					auto& opponent_info_array = j.at("data").at("opponent_info_array");
-					for (auto& o : opponent_info_array)
+					for (const auto& o : j.at("data").at("opponent_info_array"))
 					{
 						print_team_stadium_opponent_info(o);
 					}
 				}
+				else if (data.contains("team_data_set") && !data.contains("home_info"))
+				{
+					// single_mode_team/team_edit, team_race_*
+					print_aoharu_team_info(data);
+				}
 			}
 			catch (const json::out_of_range& e)
 			{
-				printf("json: out_of_range: %s\n", e.what());
+				std::cout << "json: out_of_range: " << e.what() << "\n";
 			}
 			catch (const json::type_error& e)
 			{
-				printf("json: type_error: %s\n", e.what());
+				std::cout << "json: type_error: " << e.what() << "\n";
 			}
 		}
 		catch (...)
 		{
-			printf("Uncaught exception!\n");
+			std::cout << "Uncaught exception!\n";
 		}
 	}
 }

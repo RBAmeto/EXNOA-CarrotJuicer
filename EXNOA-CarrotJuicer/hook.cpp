@@ -1,13 +1,15 @@
 #include <filesystem>
+#include <iostream>
 #include <locale>
 #include <string>
 #include <thread>
-#include <windows.h>
+#include <Windows.h>
 #include <MinHook.h>
 
+#include "config.hpp"
 #include "edb.hpp"
 #include "responses.hpp"
-#include "mdb.hpp"
+#include "notifier.hpp"
 
 using namespace std::literals;
 
@@ -28,14 +30,39 @@ namespace
 		// set this to avoid turn japanese texts into question mark
 		SetConsoleOutputCP(CP_UTF8);
 		std::locale::global(std::locale(""));
+
+		const HANDLE handle = CreateFile(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		                                 NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		DWORD mode;
+		if (!GetConsoleMode(handle, &mode))
+		{
+			std::cout << "GetConsoleMode " << GetLastError() << "\n";
+		}
+		mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+		if (!SetConsoleMode(handle, mode))
+		{
+			std::cout << "SetConsoleMode " << GetLastError() << "\n";
+		}
 	}
 
 	std::string current_time()
 	{
-		auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 			std::chrono::system_clock::now().time_since_epoch());
 		return std::to_string(ms.count());
 	}
+
+	void write_file(std::string file_name, char* buffer, int len)
+	{
+		FILE* fp;
+		fopen_s(&fp, file_name.c_str(), "wb");
+		if (fp != nullptr)
+		{
+			fwrite(buffer, 1, len, fp);
+			fclose(fp);
+		}
+	}
+
 
 	void* LZ4_decompress_safe_ext_orig = nullptr;
 
@@ -45,29 +72,51 @@ namespace
 		int compressedSize,
 		int dstCapacity)
 	{
-		int ret = reinterpret_cast<decltype(LZ4_decompress_safe_ext_hook)*>(LZ4_decompress_safe_ext_orig)(
+		const int ret = reinterpret_cast<decltype(LZ4_decompress_safe_ext_hook)*>(LZ4_decompress_safe_ext_orig)(
 			src, dst, compressedSize, dstCapacity);
 
+		auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("R.msgpack");
+		write_file(out_path, dst, ret);
+		printf("wrote response to %s\n", out_path.c_str());
+
 		std::string data(dst, ret);
-		responses::print_response_additional_info(std::string(dst, ret));
+		responses::print_response_additional_info(data);
+
+		notifier_thread.join();
 
 		return ret;
 	}
 
-	
+	void* LZ4_compress_default_ext_orig = nullptr;
+
+	int LZ4_compress_default_ext_hook(
+		char* src,
+		char* dst,
+		int srcSize,
+		int dstCapacity)
+	{
+		int ret = reinterpret_cast<decltype(LZ4_compress_default_ext_hook)*>(LZ4_compress_default_ext_orig)(
+			src, dst, srcSize, dstCapacity);
+
+		auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("Q.msgpack");
+		write_file(out_path, src, srcSize);
+		printf("wrote request to %s\n", out_path.c_str());
+
+		return ret;
+	}
 
 	void bootstrap_carrot_juicer()
 	{
 		std::filesystem::create_directory("CarrotJuicer");
 
-		auto libnative_module = GetModuleHandle(L"libnative.dll");
+		const auto libnative_module = GetModuleHandle(L"libnative.dll");
 		printf("libnative.dll at %p\n", libnative_module);
 		if (libnative_module == nullptr)
 		{
 			return;
 		}
 
-		auto LZ4_decompress_safe_ext_ptr = GetProcAddress(libnative_module, "LZ4_decompress_safe_ext");
+		const auto LZ4_decompress_safe_ext_ptr = GetProcAddress(libnative_module, "LZ4_decompress_safe_ext");
 		printf("LZ4_decompress_safe_ext at %p\n", LZ4_decompress_safe_ext_ptr);
 		if (LZ4_decompress_safe_ext_ptr == nullptr)
 		{
@@ -76,7 +125,14 @@ namespace
 		MH_CreateHook(LZ4_decompress_safe_ext_ptr, LZ4_decompress_safe_ext_hook, &LZ4_decompress_safe_ext_orig);
 		MH_EnableHook(LZ4_decompress_safe_ext_ptr);
 
-
+		auto LZ4_compress_default_ext_ptr = GetProcAddress(libnative_module, "LZ4_compress_default_ext");
+		printf("LZ4_compress_default_ext at %p\n", LZ4_compress_default_ext_ptr);
+		if (LZ4_compress_default_ext_ptr == nullptr)
+		{
+			return;
+		}
+		MH_CreateHook(LZ4_compress_default_ext_ptr, LZ4_compress_default_ext_hook, &LZ4_compress_default_ext_orig);
+		MH_EnableHook(LZ4_compress_default_ext_ptr);
 	}
 
 	void* load_library_w_orig = nullptr;
@@ -114,7 +170,10 @@ void attach()
 	MH_CreateHook(LoadLibraryW, load_library_w_hook, &load_library_w_orig);
 	MH_EnableHook(LoadLibraryW);
 
+	config::load();
+
 	std::thread(edb::init).detach();
+	std::thread(notifier::init).detach();
 }
 
 void detach()
