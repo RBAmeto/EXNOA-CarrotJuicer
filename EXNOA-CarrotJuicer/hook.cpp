@@ -5,16 +5,36 @@
 #include <thread>
 #include <Windows.h>
 #include <MinHook.h>
-
 #include "config.hpp"
 #include "edb.hpp"
 #include "responses.hpp"
 #include "notifier.hpp"
+#include "requests.hpp"
+#include "il2cpp_symbols.hpp"
 
 using namespace std::literals;
 
 namespace
 {
+	void dump_bytes(void* pos)
+	{
+		printf("Hex dump of %p\n", pos);
+
+		char* memory = reinterpret_cast<char*>(pos);
+
+		for (int i = 0; i < 0x20; i++)
+		{
+			if (i > 0 && i % 16 == 0)
+				printf("\n");
+
+			char byte = *(memory++);
+
+			printf("%02hhX ", byte);
+		}
+
+		printf("\n\n");
+	}
+
 	void create_debug_console()
 	{
 		AllocConsole();
@@ -52,7 +72,7 @@ namespace
 		return std::to_string(ms.count());
 	}
 
-	void write_file(std::string file_name, char* buffer, int len)
+	void write_file(const std::string& file_name, const char* buffer, const int len)
 	{
 		FILE* fp;
 		fopen_s(&fp, file_name.c_str(), "wb");
@@ -61,6 +81,12 @@ namespace
 			fwrite(buffer, 1, len, fp);
 			fclose(fp);
 		}
+	}
+
+	void* set_fps_orig = nullptr;
+	void set_fps_hook(int value)
+	{
+		return reinterpret_cast<decltype(set_fps_hook)*>(set_fps_orig)(60);
 	}
 
 
@@ -75,11 +101,20 @@ namespace
 		const int ret = reinterpret_cast<decltype(LZ4_decompress_safe_ext_hook)*>(LZ4_decompress_safe_ext_orig)(
 			src, dst, compressedSize, dstCapacity);
 
-		auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("R.msgpack");
-		write_file(out_path, dst, ret);
-		printf("wrote response to %s\n", out_path.c_str());
+		if (config::get().save_response)
+		{
+			const auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("R.msgpack");
+			write_file(out_path, dst, ret);
+			std::cout << "wrote response to " << out_path << "\n";
+		}
 
-		std::string data(dst, ret);
+		const std::string data(dst, ret);
+
+		auto notifier_thread = std::thread([&]
+		{
+			notifier::notify_response(data);
+		});
+
 		responses::print_response_additional_info(data);
 
 		notifier_thread.join();
@@ -95,19 +130,38 @@ namespace
 		int srcSize,
 		int dstCapacity)
 	{
-		int ret = reinterpret_cast<decltype(LZ4_compress_default_ext_hook)*>(LZ4_compress_default_ext_orig)(
+		const int ret = reinterpret_cast<decltype(LZ4_compress_default_ext_hook)*>(LZ4_compress_default_ext_orig)(
 			src, dst, srcSize, dstCapacity);
 
-		auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("Q.msgpack");
-		write_file(out_path, src, srcSize);
-		printf("wrote request to %s\n", out_path.c_str());
+		if (config::get().save_request)
+		{
+			const auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("Q.msgpack");
+			write_file(out_path, src, srcSize);
+			std::cout << "wrote request to " << out_path << "\n";
+		}
+
+		if (config::get().print_request)
+		{
+			const std::string data(src, srcSize);
+			requests::print_request_additional_info(data);
+		}
 
 		return ret;
 	}
 
+//#pragma region HOOK_ADDRESSES
+//	auto set_fps_addr = il2cpp_symbols::get_method_pointer(
+//		"UnityEngine.CoreModule.dll", "UnityEngine",
+//		"Application", "set_targetFrameRate", 1
+//	);
+//#pragma endregion
 	void bootstrap_carrot_juicer()
 	{
 		std::filesystem::create_directory("CarrotJuicer");
+		const auto il2cpp_module = GetModuleHandle(L"GameAssembly.dll");
+
+		// load il2cpp exported functions
+		il2cpp_symbols::init(il2cpp_module);
 
 		const auto libnative_module = GetModuleHandle(L"libnative.dll");
 		printf("libnative.dll at %p\n", libnative_module);
@@ -125,7 +179,7 @@ namespace
 		MH_CreateHook(LZ4_decompress_safe_ext_ptr, LZ4_decompress_safe_ext_hook, &LZ4_decompress_safe_ext_orig);
 		MH_EnableHook(LZ4_decompress_safe_ext_ptr);
 
-		auto LZ4_compress_default_ext_ptr = GetProcAddress(libnative_module, "LZ4_compress_default_ext");
+		const auto LZ4_compress_default_ext_ptr = GetProcAddress(libnative_module, "LZ4_compress_default_ext");
 		printf("LZ4_compress_default_ext at %p\n", LZ4_compress_default_ext_ptr);
 		if (LZ4_compress_default_ext_ptr == nullptr)
 		{
@@ -133,7 +187,18 @@ namespace
 		}
 		MH_CreateHook(LZ4_compress_default_ext_ptr, LZ4_compress_default_ext_hook, &LZ4_compress_default_ext_orig);
 		MH_EnableHook(LZ4_compress_default_ext_ptr);
+		const auto set_fps_ptr = GetProcAddress(il2cpp_module, "set_fps");
+		printf("set_fps at %p\n", set_fps_ptr);
+		if (set_fps_ptr == nullptr)
+		{
+			return;
+		}
+		MH_CreateHook(set_fps_ptr, set_fps_hook, &set_fps_orig);
+		MH_EnableHook(set_fps_ptr);
 	}
+
+
+
 
 	void* load_library_w_orig = nullptr;
 

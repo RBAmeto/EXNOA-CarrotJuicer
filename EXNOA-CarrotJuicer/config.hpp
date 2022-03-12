@@ -8,6 +8,8 @@ namespace config
 		bool save_request;
 		bool save_response;
 
+		bool print_request;
+
 		bool enable_ansi_colors;
 
 		bool enable_notifier;
@@ -16,6 +18,7 @@ namespace config
 		bool notifier_print_error;
 
 		bool aoharu_team_sort_with_speed;
+		int aoharu_print_team_average_status_max_turn;
 	};
 
 	void load();
