@@ -19,6 +19,7 @@ namespace config
 
 		bool aoharu_team_sort_with_speed;
 		int aoharu_print_team_average_status_max_turn;
+		int fps_hack;
 	};
 
 	void load();

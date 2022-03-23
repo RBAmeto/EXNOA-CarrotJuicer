@@ -84,9 +84,10 @@ namespace
 	}
 
 	void* set_fps_orig = nullptr;
+	int fps_num = config::get().fps_hack;
 	void set_fps_hook(int value)
 	{
-		return reinterpret_cast<decltype(set_fps_hook)*>(set_fps_orig)(60);
+		return reinterpret_cast<decltype(set_fps_hook)*>(set_fps_orig)(fps_num);
 	}
 
 
@@ -101,12 +102,6 @@ namespace
 		const int ret = reinterpret_cast<decltype(LZ4_decompress_safe_ext_hook)*>(LZ4_decompress_safe_ext_orig)(
 			src, dst, compressedSize, dstCapacity);
 
-		if (config::get().save_response)
-		{
-			const auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("R.msgpack");
-			write_file(out_path, dst, ret);
-			std::cout << "wrote response to " << out_path << "\n";
-		}
 
 		const std::string data(dst, ret);
 
@@ -122,32 +117,6 @@ namespace
 		return ret;
 	}
 
-	void* LZ4_compress_default_ext_orig = nullptr;
-
-	int LZ4_compress_default_ext_hook(
-		char* src,
-		char* dst,
-		int srcSize,
-		int dstCapacity)
-	{
-		const int ret = reinterpret_cast<decltype(LZ4_compress_default_ext_hook)*>(LZ4_compress_default_ext_orig)(
-			src, dst, srcSize, dstCapacity);
-
-		if (config::get().save_request)
-		{
-			const auto out_path = std::string("CarrotJuicer\\").append(current_time()).append("Q.msgpack");
-			write_file(out_path, src, srcSize);
-			std::cout << "wrote request to " << out_path << "\n";
-		}
-
-		if (config::get().print_request)
-		{
-			const std::string data(src, srcSize);
-			requests::print_request_additional_info(data);
-		}
-
-		return ret;
-	}
 
 //#pragma region HOOK_ADDRESSES
 //	auto set_fps_addr = il2cpp_symbols::get_method_pointer(
@@ -179,16 +148,12 @@ namespace
 		MH_CreateHook(LZ4_decompress_safe_ext_ptr, LZ4_decompress_safe_ext_hook, &LZ4_decompress_safe_ext_orig);
 		MH_EnableHook(LZ4_decompress_safe_ext_ptr);
 
-		const auto LZ4_compress_default_ext_ptr = GetProcAddress(libnative_module, "LZ4_compress_default_ext");
-		printf("LZ4_compress_default_ext at %p\n", LZ4_compress_default_ext_ptr);
-		if (LZ4_compress_default_ext_ptr == nullptr)
-		{
-			return;
-		}
-		MH_CreateHook(LZ4_compress_default_ext_ptr, LZ4_compress_default_ext_hook, &LZ4_compress_default_ext_orig);
-		MH_EnableHook(LZ4_compress_default_ext_ptr);
-		const auto set_fps_ptr = GetProcAddress(il2cpp_module, "set_fps");
-		printf("set_fps at %p\n", set_fps_ptr);
+		auto set_fps_addr = il2cpp_symbols::get_method_pointer(
+					"UnityEngine.CoreModule.dll", "UnityEngine",
+					"Application", "set_targetFrameRate", 1
+				);
+		const auto set_fps_ptr = reinterpret_cast<void*>(set_fps_addr);
+		printf("set_fps at %p\n", set_fps_addr);
 		if (set_fps_ptr == nullptr)
 		{
 			return;
